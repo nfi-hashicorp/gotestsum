@@ -1,6 +1,7 @@
 package testjson
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"strings"
@@ -41,18 +42,17 @@ func standardQuietFormat(event TestEvent, _ *Execution) string {
 	return event.Output
 }
 
+func testNameFormatTestEvent(event TestEvent) string {
+	pkgPath := RelativePackagePath(event.Package)
+
+	return fmt.Sprintf("%s %s%s %s",
+		colorEvent(event)(strings.ToUpper(string(event.Action))),
+		joinPkgToTestName(pkgPath, event.Test),
+		formatRunID(event.RunID),
+		fmt.Sprintf("(%.2fs)", event.Elapsed))
+}
+
 func testNameFormat(event TestEvent, exec *Execution) string {
-	result := colorEvent(event)(strings.ToUpper(string(event.Action)))
-	formatTest := func() string {
-		pkgPath := RelativePackagePath(event.Package)
-
-		return fmt.Sprintf("%s %s%s %s\n",
-			result,
-			joinPkgToTestName(pkgPath, event.Test),
-			formatRunID(event.RunID),
-			event.ElapsedFormatted())
-	}
-
 	switch {
 	case isPkgFailureOutput(event):
 		return event.Output
@@ -61,6 +61,7 @@ func testNameFormat(event TestEvent, exec *Execution) string {
 		if !event.Action.IsTerminal() {
 			return ""
 		}
+		result := colorEvent(event)(strings.ToUpper(string(event.Action)))
 		pkg := exec.Package(event.Package)
 		if event.Action == ActionSkip || (event.Action == ActionPass && pkg.Total == 0) {
 			result = colorEvent(event)("EMPTY")
@@ -72,10 +73,10 @@ func testNameFormat(event TestEvent, exec *Execution) string {
 	case event.Action == ActionFail:
 		pkg := exec.Package(event.Package)
 		tc := pkg.LastFailedByName(event.Test)
-		return pkg.Output(tc.ID) + formatTest()
+		return pkg.Output(tc.ID) + testNameFormatTestEvent(event) + "\n"
 
 	case event.Action == ActionPass:
-		return formatTest()
+		return testNameFormatTestEvent(event) + "\n"
 	}
 	return ""
 }
@@ -230,6 +231,12 @@ type EventFormatter interface {
 	Format(event TestEvent, output *Execution) error
 }
 
+type EventFormatterFunc func(event TestEvent, output *Execution) error
+
+func (e EventFormatterFunc) Format(event TestEvent, output *Execution) error {
+	return e(event, output)
+}
+
 type FormatOptions struct {
 	HideEmptyPackages    bool
 	UseHiVisibilityIcons bool
@@ -254,6 +261,8 @@ func NewEventFormatter(out io.Writer, format string, formatOpts FormatOptions) E
 		return &formatAdapter{out, pkgNameFormat(formatOpts)}
 	case "pkgname-and-test-fails", "short-with-failures":
 		return &formatAdapter{out, pkgNameWithFailuresFormat(formatOpts)}
+	case "github-actions", "github-action":
+		return githubActionsFormat(out)
 	default:
 		return nil
 	}
@@ -268,4 +277,25 @@ func (f *formatAdapter) Format(event TestEvent, exec *Execution) error {
 	o := f.format(event, exec)
 	_, err := f.out.Write([]byte(o))
 	return err
+}
+
+func githubActionsFormat(out io.Writer) EventFormatterFunc {
+	buf := bufio.NewWriter(out)
+	return func(event TestEvent, exec *Execution) error {
+		if event.Test != "" && event.Action.IsTerminal() {
+			buf.WriteString("::group::{{")
+			buf.WriteString(testNameFormatTestEvent(event))
+			buf.WriteString("}}\n")
+
+			pkg := exec.Package(event.Package)
+			tc := pkg.LastFailedByName(event.Test)
+			buf.WriteString(pkg.Output(tc.ID))
+
+			buf.WriteString("::endgroup::\n")
+			return buf.Flush()
+		}
+
+		buf.WriteString(testNameFormat(event, exec))
+		return buf.Flush()
+	}
 }
