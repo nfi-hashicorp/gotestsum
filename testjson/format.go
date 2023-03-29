@@ -45,7 +45,7 @@ func standardQuietFormat(event TestEvent, _ *Execution) string {
 func testNameFormatTestEvent(event TestEvent) string {
 	pkgPath := RelativePackagePath(event.Package)
 
-	return fmt.Sprintf("%s %s%s %s",
+	return fmt.Sprintf("%s %s%s %s\n",
 		colorEvent(event)(strings.ToUpper(string(event.Action))),
 		joinPkgToTestName(pkgPath, event.Test),
 		formatRunID(event.RunID),
@@ -73,10 +73,10 @@ func testNameFormat(event TestEvent, exec *Execution) string {
 	case event.Action == ActionFail:
 		pkg := exec.Package(event.Package)
 		tc := pkg.LastFailedByName(event.Test)
-		return pkg.Output(tc.ID) + testNameFormatTestEvent(event) + "\n"
+		return pkg.Output(tc.ID) + testNameFormatTestEvent(event)
 
 	case event.Action == ActionPass || event.Action == ActionSkip:
-		return testNameFormatTestEvent(event) + "\n"
+		return testNameFormatTestEvent(event)
 	}
 	return ""
 }
@@ -282,14 +282,13 @@ func (f *formatAdapter) Format(event TestEvent, exec *Execution) error {
 func githubActionsFormat(out io.Writer) EventFormatterFunc {
 	buf := bufio.NewWriter(out)
 	return func(event TestEvent, exec *Execution) error {
-		if event.Test != "" && event.Action == ActionFail {
-			buf.WriteString("::group::{{")
+		if event.Test != "" && event.Action.IsTerminal() {
+			buf.WriteString("::group::")
 			buf.WriteString(testNameFormatTestEvent(event))
-			buf.WriteString("}}\n")
 
 			pkg := exec.Package(event.Package)
 			tc := pkg.LastFailedByName(event.Test)
-			buf.WriteString(pkg.Output(tc.ID))
+			buf.WriteString(strings.TrimRight(pkg.Output(tc.ID), "\n"))
 
 			buf.WriteString("::endgroup::\n")
 			return buf.Flush()
