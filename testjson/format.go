@@ -75,7 +75,7 @@ func testNameFormat(event TestEvent, exec *Execution) string {
 		tc := pkg.LastFailedByName(event.Test)
 		return pkg.Output(tc.ID) + testNameFormatTestEvent(event) + "\n"
 
-	case event.Action == ActionPass:
+	case event.Action == ActionPass || event.Action == ActionSkip:
 		return testNameFormatTestEvent(event) + "\n"
 	}
 	return ""
@@ -282,7 +282,7 @@ func (f *formatAdapter) Format(event TestEvent, exec *Execution) error {
 func githubActionsFormat(out io.Writer) EventFormatterFunc {
 	buf := bufio.NewWriter(out)
 	return func(event TestEvent, exec *Execution) error {
-		if event.Test != "" && event.Action.IsTerminal() {
+		if event.Test != "" && event.Action == ActionFail {
 			buf.WriteString("::group::{{")
 			buf.WriteString(testNameFormatTestEvent(event))
 			buf.WriteString("}}\n")
